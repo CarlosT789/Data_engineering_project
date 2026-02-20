@@ -53,8 +53,26 @@ def distance_checking(connection):
     )
     return df
 
+    
+#Question 2
+def obtain_airports_origin_NYC(connection):
+    query = """
+    SELECT DISTINCT airp.*
+    FROM flights f
+    JOIN airports airp ON f.origin = airp.faa
+    """
+    airports_origin_NYC_df = pd.read_sql_query(query, connection)
+    return airports_origin_NYC_df
 
+#Question 3
+
+
+#Run code
 if __name__== "__main__":
-    df_result = distance_checking(connection)
-    print(df_result.head())
+    df_result_1 = distance_checking(connection)
+    print(df_result_1.head())
+    
+    df_result_2 = obtain_airports_origin_NYC(connection)
+    print(df_result_2.head())
+    
     connection.close()
