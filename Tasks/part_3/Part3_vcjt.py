@@ -65,14 +65,85 @@ def obtain_airports_origin_NYC(connection):
     return airports_origin_NYC_df
 
 #Question 3
+def plot_destinations_day(month, day, origin_airport, connection):
+    query = """
+    SELECT DISTINCT airp.faa, airp.name, airp.lat, airp.lon
+    FROM flights fli
+    JOIN airports airp ON fli.dest = airp.faa
+    WHERE fli.month = ? AND fli.day = ? AND fli.origin = ?
+    """ 
+
+    df = pd.read_sql_query(query, connection, params = (month, day, origin_airport))
+
+    if not df.empty:
+        fig = px.scatter_geo(df, lat = 'lat', lon = 'lon', hover_name = 'name')
+        fig.show()
+    else:
+        print("No flights were identified.")
+
+#Question 4
+def statistics_day(month, day, origin_airport, connection):
+    query = """
+    SELECT  fli.dest
+    FROM flights fli
+    WHERE fli.month = ? AND fli.day = ? AND fli.origin = ?
+    """ 
+
+    df = pd.read_sql_query(query, connection, params = (month, day, origin_airport))
+
+    if df.empty:
+        print("No flights were identified.")
+
+    data = {
+        'flights_total':len(df),
+        'unique_dest': df['dest'].nunique(),
+        'most_visit': df['dest'].value_counts().idxmax()
+        }
+    
+    return data
+
+#Question 5
+def plane_types(origin_airport, destination_airport, connection):
+    query = """
+    SELECT pla.type, COUNT(*) as use
+    FROM flights fli
+    JOIN planes pla ON fli.tailnum = pla.tailnum
+    WHERE fli.origin = ? AND fli.dest = ? AND pla.type IS NOT NULL
+    GROUP BY pla.type
+    """ 
+
+    df = pd.read_sql_query(query, connection, params = (origin_airport, destination_airport))
+
+    data = dict(zip(df['type'],df['use']))
+    return data
+
 
 
 #Run code
 if __name__== "__main__":
     df_result_1 = distance_checking(connection)
+    print("Question 1")
     print(df_result_1.head())
+    print('\n')
     
     df_result_2 = obtain_airports_origin_NYC(connection)
+    print("Question 2")
     print(df_result_2.head())
+    print('\n')
+    
+    df_result_3 = plot_destinations_day(12, 31, 'EWR', connection)
+    print("Question 3")
+    print('\n')
+    
+    df_result_4 = statistics_day(12, 31, 'EWR', connection)
+    print("Question 4")
+    print(df_result_4)
+    print('\n')
+    
+    df_result_5 = plane_types('EWR', 'LAX', connection)
+    print("Question 5")
+    print(df_result_5)
+    print('\n')
+    
     
     connection.close()
