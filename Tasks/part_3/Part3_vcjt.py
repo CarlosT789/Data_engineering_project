@@ -6,24 +6,6 @@ import math
 import sys
 import os
 
-#with sqlite3.connect('flights_database.db') as connection:
-#    cursor = connection.cursor()
-#    query = "SELECT * FROM airlines;"
-#    cursor.execute(query)
-#    output=cursor.fetchall()
-#    for item in output:
-#        print(item)
-
-
-#connection = sqlite3.connect("flights_database.db")
-#variable = "\"A321-211\""
-#query = f"SELECT tailnum FROM planes WHERE model = {variable}"
-#cursor = connection.execute(query)
-#output = cursor.fetchall()
-#df = pd.DataFrame(output, columns = [x[0] for x in cursor.description])
-#print(df)
-
-
 #Question 1
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'part_1'))
 
@@ -199,6 +181,43 @@ def update_plane_speeds(connection):
     print("database updated")
 
 
+#Question 11 and 12
+def inner_product(connection):
+    query = """
+    SELECT f.air_time, w.wind_dir, w.wind_speed,
+        a1.lat as lat_origin, a1.lon as lon_origin,
+        a2.lat as lat_dest, a2.lon as lon_dest
+    FROM flights f
+    JOIN weather w ON f.origin = w.origin
+        AND f.year = w.year AND f.month = w.month
+        AND f.day = w.day AND f.hour = w.hour
+        
+    JOIN airports a1 ON f.origin = a1.faa
+    JOIN airports a2 ON f.dest = a2.faa
+    WHERE w.wind_dir IS NOT NULL AND w.wind_speed IS NOT NULL
+    AND f.air_time IS NOT NULL
+    """
+    df = pd. read_sql_query(query, connection)
+
+    def calculate_bearing(lat1, lon1, lat2, lon2):
+        lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
+        dlon = lon2-lon1
+        x = np.sin(dlon)*np.cos(lat2)
+        y=np.cos(lat1)*np.sin(lat2)-np.sin(lat1)*np.cos(lat2)*np.cos(dlon)
+        initial_bearing = np.arctan2(x,y)
+        return (np.degrees(initial_bearing)*360) % 360
+
+        
+    df['flight_dir'] = df.apply(lambda row: calculate_bearing(row['lat_origin'], row['lon_origin'], row['lat_dest'], row['lon_dest']), axis=1)
+    
+    df['angle_diff_rad']=np.radians(df['flight_dir']-df['wind_dir'])
+    df['inner_product']=df['wind_speed']*np.cos(df['angle_diff_rad'])
+    
+    df['inner_product_sign']=np.sign(df['inner_product']).map({1.0: 'Tailwind (+)', -1.0: 'Headwind (-)', 0.0: 'Neutral'})
+
+    fig = px.box(df, x='inner_product_sign', y = 'air_time',
+                title = "Relation")
+    fig.show()
 
 
 #Run code
@@ -252,7 +271,9 @@ if __name__== "__main__":
     print(df_result_10)
     print('\n')
     
-    
-    
+    df_result_11 = inner_product(connection)
+    print("Questions 11 and 12")
+    print(df_result_11)
+    print('\n')
     
     connection.close()
