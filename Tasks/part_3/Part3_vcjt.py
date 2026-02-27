@@ -123,7 +123,7 @@ def delay_flights(start, end, destination, connection):
     FROM flights
     WHERE month BETWEEN ? AND ?
         AND dest = ?
-        and arr_delay>0
+        AND arr_delay>0
     """ 
 
     df = pd.read_sql_query(query, connection,params = (start, end, destination))
