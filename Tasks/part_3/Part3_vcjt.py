@@ -117,6 +117,88 @@ def plane_types(origin_airport, destination_airport, connection):
     data = dict(zip(df['type'],df['use']))
     return data
 
+#Question 6
+def plot_delay_airline(connection):
+    query = """
+    SELECT air.name, AVG(fli.dep_delay) as delay
+    FROM flights fli
+    JOIN airlines air ON fli.carrier = air.carrier
+    GROUP BY air.name
+    """ 
+
+    df = pd.read_sql_query(query, connection)
+
+    fig = px.bar(df, x='name', y = 'delay',
+                 title = "average delay",
+                labels = {'name':"airline", 'delay':"average delay"})
+    fig.update_layout(xaxis_tickangle=-45)
+    fig.show()
+
+#Question 7
+def delay_flights(start, end, destination, connection):
+    query = """
+    SELECT COUNT(*) as delay
+    FROM flights
+    WHERE month BETWEEN ? AND ?
+        AND dest = ?
+        and arr_delay>0
+    """ 
+
+    df = pd.read_sql_query(query, connection,params = (start, end, destination))
+    return df['delay'].iloc[0]
+
+
+#Question 8
+def top_manufacturers(destination, connection):
+    query = """
+    SELECT pla.manufacturer, COUNT(*) as count
+    FROM flights fli
+    JOIN planes pla ON fli.tailnum = pla.tailnum
+    WHERE fli.dest = ?
+    GROUP BY pla.manufacturer
+    ORDER BY count DESC
+    """
+    return pd.read_sql_query(query, connection,params = (destination,))
+
+#Question 9
+def distance_vs_delay(connection):
+    query = """
+    SELECT distance, arr_delay
+    FROM flights fli
+    WHERE arr_delay IS NOT NULL AND distance Is NOT NULL
+    """
+    df= pd.read_sql_query(query, connection)
+    fig = px.scatter(df, x='distance', y = 'arr_delay',
+                title = "distance vs arrival delay")
+    fig.show()
+
+#Question 10
+def update_plane_speeds(connection):
+    query = """
+    WITH AvgSpeeds AS(
+        SELECT tailnum, AVG(distance / (air_time / 60.0)) as avg_speed
+        FROM flights
+        WHERE distance IS NOT NULL AND air_time IS NOT NULL AND air_time>0
+        GROUP BY tailnum
+        )
+    UPDATE planes
+    SET speed =(
+        SELECT avg_speed
+        FROM AvgSpeeds
+        WHERE AvgSpeeds.tailnum = planes.tailnum
+    )
+    WHERE EXISTS(
+        SELECT 1
+        FROM AvgSpeeds
+        WHERE AvgSpeeds.tailnum = planes.tailnum
+    );
+    """
+    cursor =connection.cursor()
+    cursor.execute(query)
+    connection.commit()
+    print("database updated")
+
+
 
 
 #Run code
@@ -144,6 +226,33 @@ if __name__== "__main__":
     print("Question 5")
     print(df_result_5)
     print('\n')
+    
+    df_result_6 = plot_delay_airline(connection)
+    print("Question 6")
+    print(df_result_6)
+    print('\n')
+    
+    df_result_7 = delay_flights(1,3, 'DTW',connection)
+    print("Question 7")
+    print(df_result_7)
+    print('\n')
+    
+    df_result_8 = top_manufacturers('LAX',connection)
+    print("Question 8")
+    print(df_result_8)
+    print('\n')
+    
+    df_result_9 = distance_vs_delay(connection)
+    print("Question 9")
+    print(df_result_9)
+    print('\n')
+    
+    df_result_10 = update_plane_speeds(connection)
+    print("Question 10")
+    print(df_result_10)
+    print('\n')
+    
+    
     
     
     connection.close()
