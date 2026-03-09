@@ -385,6 +385,108 @@ def placeholder_noise_timeline() -> pd.DataFrame:
     )
 
 
+@st.cache_data(show_spinner=False)
+def get_real_noise_data(
+    departure: Optional[str],
+    arrival: Optional[str],
+    start_date: date,
+    end_date: date,
+) -> Tuple[pd.DataFrame, pd.DataFrame, float]:
+
+    # EPNdB values from Table 1 of the research study
+    epndb_mapping = """
+        CASE
+            WHEN p.model LIKE '%747-4%' THEN 299.1
+            WHEN p.model LIKE '%777-3%' THEN 289.1
+            WHEN p.model LIKE '%A330%' THEN 287.0
+            WHEN p.model LIKE '%777-2%' THEN 285.7
+            WHEN p.model LIKE '%767-3%' THEN 283.7
+            WHEN p.model LIKE '%A321%' AND p.model NOT LIKE '%neo%' THEN 279.3
+            WHEN p.model LIKE '%737-8%' THEN 275.3
+            WHEN p.model LIKE '%737-4%' THEN 274.9
+            WHEN p.model LIKE '%787-9%' THEN 273.8
+            WHEN p.model LIKE '%737-3%' THEN 273.5
+            WHEN p.model LIKE '%737-7%' THEN 272.3
+            WHEN p.model LIKE '%A320%' AND p.model NOT LIKE '%neo%' THEN 272.3
+            WHEN p.model LIKE '%A350%' THEN 272.0
+            WHEN p.model LIKE '%737-5%' THEN 271.2
+            WHEN p.model LIKE '%E170%' OR p.model LIKE '%E175%' THEN 269.7
+            WHEN p.model LIKE '%E190%' OR p.model LIKE '%E195%' THEN 269.2
+            WHEN p.model LIKE '%A319%' THEN 269.0
+            WHEN p.model LIKE '%A321neo%' THEN 268.0
+            WHEN p.model LIKE '%F100%' THEN 266.3
+            WHEN p.model LIKE '%737 MAX%' THEN 265.0
+            WHEN p.model LIKE '%A320neo%' THEN 258.0
+            WHEN p.model LIKE '%E295%' THEN 257.0
+            WHEN p.model LIKE '%F70%' THEN 255.7
+            ELSE 275.0
+        END
+    """
+
+    date_filter = "date(printf('%04d-%02d-%02d', f.year, f.month, f.day)) BETWEEN ? AND ?"
+
+    # --- Departures leg ---
+    # A flight counts as a departure noise event at a NYC airport when origin IN NYC.
+    # The sidebar "departure" filter restricts which NYC origin; "arrival" restricts dest.
+    dep_parts = [f"f.origin IN ('JFK','EWR','LGA')", date_filter]
+    dep_params: List[object] = [start_date.isoformat(), end_date.isoformat()]
+    if departure is not None:
+        dep_parts.append("f.origin = ?")
+        dep_params.append(departure)
+    if arrival is not None:
+        dep_parts.append("f.dest = ?")
+        dep_params.append(arrival)
+
+    # --- Arrivals leg ---
+    # A flight counts as an arrival noise event at a NYC airport when dest IN NYC.
+    # The sidebar "departure" filter restricts origin; "arrival" restricts which NYC dest.
+    arr_parts = [f"f.dest IN ('JFK','EWR','LGA')", date_filter]
+    arr_params: List[object] = [start_date.isoformat(), end_date.isoformat()]
+    if departure is not None:
+        arr_parts.append("f.origin = ?")
+        arr_params.append(departure)
+    if arrival is not None:
+        arr_parts.append("f.dest = ?")
+        arr_params.append(arrival)
+
+    dep_where = " AND ".join(dep_parts)
+    arr_where = " AND ".join(arr_parts)
+
+    # UNION ALL: departures (airport = origin) + arrivals (airport = dest)
+    # Arrivals use arr_time/100 to get the correct local arrival hour,
+    # since f.hour always refers to the scheduled departure hour.
+    union_sql = f"""
+        SELECT f.carrier, f.tailnum, CAST(f.hour AS INTEGER) AS hour, f.origin AS airport,
+               {epndb_mapping} AS epndb
+        FROM flights f
+        LEFT JOIN planes p ON f.tailnum = p.tailnum
+        WHERE {dep_where}
+        UNION ALL
+        SELECT f.carrier, f.tailnum, CAST(f.arr_time / 100 AS INTEGER) AS hour, f.dest AS airport,
+               {epndb_mapping} AS epndb
+        FROM flights f
+        LEFT JOIN planes p ON f.tailnum = p.tailnum
+        WHERE {arr_where}
+    """
+    union_params = tuple(dep_params + arr_params)
+
+    # Query 1: Ranking by Airport
+    df_ranking = qdf(
+        f"SELECT airport, SUM(epndb) AS noise FROM ({union_sql}) GROUP BY airport ORDER BY noise DESC",
+        union_params,
+    )
+
+    total_noise = df_ranking["noise"].sum() if not df_ranking.empty else 0.0
+
+    # Query 2: Timeline by Hour
+    df_timeline = qdf(
+        f"SELECT CAST(hour AS INTEGER) AS hour, SUM(epndb) AS noise FROM ({union_sql}) WHERE hour IS NOT NULL GROUP BY hour ORDER BY hour",
+        union_params,
+    )
+
+    return df_ranking, df_timeline, total_noise
+
+
 # dashboard session state
 
 def init_session_state() -> None:
@@ -751,15 +853,51 @@ def render_main_content() -> None:
 
     elif page == "Noise":
         st.markdown("### Noise")
-        st.metric("Total noise produced by NYC airports", "8,420,000")
+
+        filters = st.session_state["submitted_filters"]
+        dep = filters["departure"]
+        arr = filters["arrival"]
+        start_date, end_date = filters["timeframe"]
+
+        df_ranking, df_timeline, total_noise = get_real_noise_data(dep, arr, start_date, end_date)
+
+        if dep and not arr:
+            noise_label = "departures only"
+        elif arr and not dep:
+            noise_label = "arrivals only"
+        elif dep and arr:
+            noise_label = "route specific"
+        else:
+            noise_label = "arrivals + departures"
+
+        st.metric(
+            f"Total noise produced by NYC airports (Cumulative EPNdB, {noise_label})",
+            f"{total_noise:,.1f}",
+        )
 
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown("#### Ranking of NYC airports")
-            st.dataframe(placeholder_noise_ranking(), use_container_width=True, hide_index=True)
+            st.markdown("#### Ranking of NYC airports by noise")
+            if df_ranking.empty:
+                st.info("No data available for the selected filters.")
+            else:
+                display_ranking = df_ranking.copy()
+                display_ranking.columns = ["Airport", "Noise (EPNdB)"]
+                display_ranking["Noise (EPNdB)"] = display_ranking["Noise (EPNdB)"].map("{:,.1f}".format)
+                st.dataframe(display_ranking, use_container_width=True, hide_index=True)
         with c2:
-            fig = px.line(placeholder_noise_timeline(), x="hour", y="noise", markers=True, title="Noise during the day")
-            st.plotly_chart(fig, use_container_width=True)
+            if df_timeline.empty:
+                st.info("No timeline data available for the selected filters.")
+            else:
+                fig = px.bar(
+                    df_timeline,
+                    x="hour",
+                    y="noise",
+                    title=f"Noise production by hour of day ({noise_label})",
+                    labels={"hour": "Hour of Day", "noise": "Cumulative EPNdB"},
+                )
+                fig.update_layout(xaxis=dict(tickmode="linear", tick0=0, dtick=1))
+                st.plotly_chart(fig, use_container_width=True)
 
 
 # main
