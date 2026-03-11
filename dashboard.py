@@ -12,6 +12,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from noise import get_real_noise_data
+
 
 # directory config might need to change it
 
@@ -383,108 +385,6 @@ def placeholder_noise_timeline() -> pd.DataFrame:
             "noise": [120, 90, 70, 60, 55, 80, 180, 350, 520, 610, 680, 720, 740, 760, 780, 810, 860, 900, 880, 760, 610, 420, 250, 160],
         }
     )
-
-
-@st.cache_data(show_spinner=False)
-def get_real_noise_data(
-    departure: Optional[str],
-    arrival: Optional[str],
-    start_date: date,
-    end_date: date,
-) -> Tuple[pd.DataFrame, pd.DataFrame, float]:
-
-    # EPNdB values from Table 1 of the research study
-    epndb_mapping = """
-        CASE
-            WHEN p.model LIKE '%747-4%' THEN 299.1
-            WHEN p.model LIKE '%777-3%' THEN 289.1
-            WHEN p.model LIKE '%A330%' THEN 287.0
-            WHEN p.model LIKE '%777-2%' THEN 285.7
-            WHEN p.model LIKE '%767-3%' THEN 283.7
-            WHEN p.model LIKE '%A321%' AND p.model NOT LIKE '%neo%' THEN 279.3
-            WHEN p.model LIKE '%737-8%' THEN 275.3
-            WHEN p.model LIKE '%737-4%' THEN 274.9
-            WHEN p.model LIKE '%787-9%' THEN 273.8
-            WHEN p.model LIKE '%737-3%' THEN 273.5
-            WHEN p.model LIKE '%737-7%' THEN 272.3
-            WHEN p.model LIKE '%A320%' AND p.model NOT LIKE '%neo%' THEN 272.3
-            WHEN p.model LIKE '%A350%' THEN 272.0
-            WHEN p.model LIKE '%737-5%' THEN 271.2
-            WHEN p.model LIKE '%E170%' OR p.model LIKE '%E175%' THEN 269.7
-            WHEN p.model LIKE '%E190%' OR p.model LIKE '%E195%' THEN 269.2
-            WHEN p.model LIKE '%A319%' THEN 269.0
-            WHEN p.model LIKE '%A321neo%' THEN 268.0
-            WHEN p.model LIKE '%F100%' THEN 266.3
-            WHEN p.model LIKE '%737 MAX%' THEN 265.0
-            WHEN p.model LIKE '%A320neo%' THEN 258.0
-            WHEN p.model LIKE '%E295%' THEN 257.0
-            WHEN p.model LIKE '%F70%' THEN 255.7
-            ELSE 275.0
-        END
-    """
-
-    date_filter = "date(printf('%04d-%02d-%02d', f.year, f.month, f.day)) BETWEEN ? AND ?"
-
-    # --- Departures leg ---
-    # A flight counts as a departure noise event at a NYC airport when origin IN NYC.
-    # The sidebar "departure" filter restricts which NYC origin; "arrival" restricts dest.
-    dep_parts = [f"f.origin IN ('JFK','EWR','LGA')", date_filter]
-    dep_params: List[object] = [start_date.isoformat(), end_date.isoformat()]
-    if departure is not None:
-        dep_parts.append("f.origin = ?")
-        dep_params.append(departure)
-    if arrival is not None:
-        dep_parts.append("f.dest = ?")
-        dep_params.append(arrival)
-
-    # --- Arrivals leg ---
-    # A flight counts as an arrival noise event at a NYC airport when dest IN NYC.
-    # The sidebar "departure" filter restricts origin; "arrival" restricts which NYC dest.
-    arr_parts = [f"f.dest IN ('JFK','EWR','LGA')", date_filter]
-    arr_params: List[object] = [start_date.isoformat(), end_date.isoformat()]
-    if departure is not None:
-        arr_parts.append("f.origin = ?")
-        arr_params.append(departure)
-    if arrival is not None:
-        arr_parts.append("f.dest = ?")
-        arr_params.append(arrival)
-
-    dep_where = " AND ".join(dep_parts)
-    arr_where = " AND ".join(arr_parts)
-
-    # UNION ALL: departures (airport = origin) + arrivals (airport = dest)
-    # Arrivals use arr_time/100 to get the correct local arrival hour,
-    # since f.hour always refers to the scheduled departure hour.
-    union_sql = f"""
-        SELECT f.carrier, f.tailnum, CAST(f.hour AS INTEGER) AS hour, f.origin AS airport,
-               {epndb_mapping} AS epndb
-        FROM flights f
-        LEFT JOIN planes p ON f.tailnum = p.tailnum
-        WHERE {dep_where}
-        UNION ALL
-        SELECT f.carrier, f.tailnum, CAST(f.arr_time / 100 AS INTEGER) AS hour, f.dest AS airport,
-               {epndb_mapping} AS epndb
-        FROM flights f
-        LEFT JOIN planes p ON f.tailnum = p.tailnum
-        WHERE {arr_where}
-    """
-    union_params = tuple(dep_params + arr_params)
-
-    # Query 1: Ranking by Airport
-    df_ranking = qdf(
-        f"SELECT airport, SUM(epndb) AS noise FROM ({union_sql}) GROUP BY airport ORDER BY noise DESC",
-        union_params,
-    )
-
-    total_noise = df_ranking["noise"].sum() if not df_ranking.empty else 0.0
-
-    # Query 2: Timeline by Hour
-    df_timeline = qdf(
-        f"SELECT CAST(hour AS INTEGER) AS hour, SUM(epndb) AS noise FROM ({union_sql}) WHERE hour IS NOT NULL GROUP BY hour ORDER BY hour",
-        union_params,
-    )
-
-    return df_ranking, df_timeline, total_noise
 
 
 # dashboard session state
