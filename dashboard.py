@@ -13,6 +13,18 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from noise import get_real_noise_data
+from co2 import get_real_co2_data
+
+from planes import (
+    load_plane_data,
+    apply_plane_filters,
+    average_flight_speed,
+    plot_top_models_by_flights,
+    plot_top_models_by_distance,
+    plot_top_manufacturers,
+    plot_average_speed_by_model,
+    plot_plane_type_distribution,
+)
 
 
 # directory config might need to change it
@@ -51,6 +63,10 @@ def get_table_names() -> List[str]:
             con,
         )
     return df["name"].tolist()
+
+@st.cache_data(show_spinner=False)
+def get_plane_data() -> pd.DataFrame:
+    return load_plane_data(DB_PATH)
 
 
 def validate_database() -> None:
@@ -113,6 +129,28 @@ def get_all_filter_airports() -> pd.DataFrame:
             SELECT origin FROM flights WHERE origin IS NOT NULL
             UNION
             SELECT dest FROM flights WHERE dest IS NOT NULL
+        )
+          AND a.lat IS NOT NULL
+          AND a.lon IS NOT NULL
+        ORDER BY a.faa
+        """
+    )
+
+
+@st.cache_data(show_spinner=False)
+def get_departure_filter_airports() -> pd.DataFrame:
+    """
+    Only airports that appear as origins in flights.
+    In this dataset, these should be the NYC departure airports.
+    """
+    return qdf(
+        """
+        SELECT DISTINCT a.faa, a.name, a.lat, a.lon
+        FROM airports a
+        WHERE a.faa IN (
+            SELECT origin
+            FROM flights
+            WHERE origin IS NOT NULL
         )
           AND a.lat IS NOT NULL
           AND a.lon IS NOT NULL
@@ -310,7 +348,6 @@ def interpolate_geodesic(
     return lats, lons
 
 
-
 # PLACEHOLDERS FOR LOWER TABS (Careful only placeholders atm)
 
 def placeholder_delay_hist() -> pd.DataFrame:
@@ -339,52 +376,6 @@ def placeholder_top_airlines() -> pd.DataFrame:
         {"airline": ["UA", "AA", "DL", "B6", "WN"], "delays": [7200, 6900, 6500, 6100, 5400]}
     )
 
-
-def placeholder_planes_data() -> Dict[str, pd.DataFrame]:
-    return {
-        "top_used": pd.DataFrame(
-            {"plane": ["A320", "B737-800", "E190", "CRJ-900", "A321"], "value": [14000, 13200, 9800, 8700, 8200]}
-        ),
-        "top_fuel": pd.DataFrame(
-            {"plane": ["B777", "A330", "B767", "A321", "B737-800"], "value": [5400, 5100, 4700, 4200, 3900]}
-        ),
-        "top_distance": pd.DataFrame(
-            {"plane": ["B777", "A330", "B767", "A321", "B737-800"], "value": [8900, 8600, 8100, 7200, 6800]}
-        ),
-        "top_manufacturers": pd.DataFrame(
-            {"manufacturer": ["Boeing", "Airbus", "Embraer", "Bombardier", "Cessna"], "count": [22000, 19000, 8700, 5100, 600]}
-        ),
-    }
-
-
-def placeholder_co2_data() -> Dict[str, float]:
-    return {
-        "Total fuel usage": 2450000,
-        "Average fuel usage": 563.1,
-        "Total CO2 emissions": 7742000,
-        "Average CO2 emissions": 1779.4,
-        "Average CO2 per passenger": 112.8,
-        "Average compensation": 11.3,
-    }
-
-
-def placeholder_co2_airlines() -> pd.DataFrame:
-    return pd.DataFrame(
-        {"airline": ["AA", "DL", "UA", "B6", "WN"], "co2": [1400000, 1250000, 1190000, 980000, 720000]}
-    )
-
-
-def placeholder_noise_ranking() -> pd.DataFrame:
-    return pd.DataFrame({"airport": ["JFK", "EWR", "LGA"], "noise": [3100000, 2850000, 2470000]})
-
-
-def placeholder_noise_timeline() -> pd.DataFrame:
-    return pd.DataFrame(
-        {
-            "hour": list(range(24)),
-            "noise": [120, 90, 70, 60, 55, 80, 180, 350, 520, 610, 680, 720, 740, 760, 780, 810, 860, 900, 880, 760, 610, 420, 250, 160],
-        }
-    )
 
 
 # dashboard session state
@@ -558,30 +549,38 @@ def render_filter_panel() -> None:
 
     min_date, max_date = get_date_bounds()
 
-    airports_df = get_all_filter_airports()
-    airport_faas = airports_df["faa"].tolist()
-    airport_lookup = {
+    # Departure: only origins from dataset (NYC airports)
+    dep_df = get_departure_filter_airports()
+    dep_faas = dep_df["faa"].tolist()
+    dep_lookup = {
         row["faa"]: f"{row['faa']} — {row['name']}"
-        for _, row in airports_df.iterrows()
+        for _, row in dep_df.iterrows()
+    }
+
+    # Arrival: all airports that appear anywhere and have coordinates
+    arr_df = get_all_filter_airports()
+    arr_faas = arr_df["faa"].tolist()
+    arr_lookup = {
+        row["faa"]: f"{row['faa']} — {row['name']}"
+        for _, row in arr_df.iterrows()
     }
 
     st.selectbox(
         "Departure",
-        options=[None] + airport_faas,
-        format_func=lambda x: "All" if x is None else airport_lookup.get(x, x),
+        options=[None] + dep_faas,
+        format_func=lambda x: "All" if x is None else dep_lookup.get(x, x),
         key="draft_departure",
     )
 
     st.selectbox(
         "Arrival",
-        options=[None] + airport_faas,
-        format_func=lambda x: "All" if x is None else airport_lookup.get(x, x),
+        options=[None] + arr_faas,
+        format_func=lambda x: "All" if x is None else arr_lookup.get(x, x),
         key="draft_arrival",
     )
 
     timeframe_raw = st.date_input(
         "Timeframe",
-        value=st.session_state["draft_timeframe"],
         min_value=min_date,
         max_value=max_date,
         key="draft_timeframe",
@@ -717,39 +716,180 @@ def render_main_content() -> None:
 
     elif page == "Planes":
         st.markdown("### Planes")
-        data = placeholder_planes_data()
 
-        c1, c2 = st.columns(2)
-        with c1:
-            fig1 = px.bar(data["top_used"], x="plane", y="value", title="Top 5 by number of flights")
-            st.plotly_chart(fig1, use_container_width=True)
-        with c2:
-            fig2 = px.bar(data["top_fuel"], x="plane", y="value", title="Top 5 by fuel usage")
-            st.plotly_chart(fig2, use_container_width=True)
+        filters = st.session_state["submitted_filters"]
+        dep = filters["departure"]
+        arr = filters["arrival"]
+        start_date, end_date = filters["timeframe"]
 
-        c3, c4 = st.columns(2)
-        with c3:
-            fig3 = px.bar(data["top_distance"], x="plane", y="value", title="Top 5 by distance")
-            st.plotly_chart(fig3, use_container_width=True)
-        with c4:
-            fig4 = px.bar(data["top_manufacturers"], x="manufacturer", y="count", title="Top manufacturers")
-            st.plotly_chart(fig4, use_container_width=True)
+        plane_df = get_plane_data()
+        filtered_planes = apply_plane_filters(
+            plane_df,
+            origin=dep,
+            dest=arr,
+            start_date=start_date,
+            end_date=end_date,
+        )
 
-        st.metric("Average flight speed", "742.3 km/h")
+        avg_speed = average_flight_speed(filtered_planes)
+
+        if filtered_planes.empty:
+            st.info("No plane data available for the selected filters.")
+        else:
+            if pd.isna(avg_speed):
+                st.metric("Average flight speed", "—")
+            else:
+                st.metric("Average flight speed", f"{avg_speed:.1f} mph")
+
+            c1, c2 = st.columns(2)
+            with c1:
+                st.plotly_chart(
+                    plot_top_models_by_flights(filtered_planes),
+                    use_container_width=True
+                )
+            with c2:
+                st.plotly_chart(
+                    plot_top_models_by_distance(filtered_planes),
+                    use_container_width=True
+                )
+
+            c3, c4 = st.columns(2)
+            with c3:
+                st.plotly_chart(
+                    plot_top_manufacturers(filtered_planes),
+                    use_container_width=True
+                )
+            with c4:
+                st.plotly_chart(
+                    plot_average_speed_by_model(filtered_planes),
+                    use_container_width=True
+                )
+
+            st.plotly_chart(
+                plot_plane_type_distribution(filtered_planes),
+                use_container_width=True
+            )
 
     elif page == "CO2":
         st.markdown("### CO2")
-        stats = placeholder_co2_data()
 
-        st.markdown(f"**Total fuel usage:** {stats['Total fuel usage']:,.1f}")
-        st.markdown(f"**Average fuel usage:** {stats['Average fuel usage']:.1f}")
-        st.markdown(f"**Total CO2 emissions:** {stats['Total CO2 emissions']:,.1f}")
-        st.markdown(f"**Average CO2 emissions:** {stats['Average CO2 emissions']:.1f}")
-        st.markdown(f"**Average CO2 per passenger:** {stats['Average CO2 per passenger']:.1f}")
-        st.markdown(f"**Average compensation:** € {stats['Average compensation']:.2f}")
+        filters = st.session_state["submitted_filters"]
+        dep = filters["departure"]
+        arr = filters["arrival"]
+        start_date, end_date = filters["timeframe"]
 
-        fig = px.bar(placeholder_co2_airlines(), x="airline", y="co2", title="Emissions by airline")
-        st.plotly_chart(fig, use_container_width=True)
+        (
+            stats,
+            df_airlines_total,
+            df_airlines_avg,
+            df_family,
+            df_timeline,
+        ) = get_real_co2_data(dep, arr, start_date, end_date)
+
+        # --- metric layout (clean grid)
+
+        r1c1, r1c2, r1c3 = st.columns(3)
+        with r1c1:
+            st.metric("Total fuel usage", f"{stats['total_fuel_kg']:,.0f} kg")
+        with r1c2:
+            st.metric("Average fuel usage", f"{stats['avg_fuel_kg']:,.1f} kg / flight")
+        with r1c3:
+            st.metric("Number of flights", f"{stats['n_flights']:,}")
+
+        r2c1, r2c2, r2c3 = st.columns(3)
+        with r2c1:
+            st.metric("Total CO2 emissions", f"{stats['total_co2_kg']:,.0f} kg")
+        with r2c2:
+            st.metric("Average CO2 emissions", f"{stats['avg_co2_kg']:,.1f} kg / flight")
+        with r2c3:
+            st.metric("Average CO2 per passenger", f"{stats['avg_co2_per_passenger_kg']:,.1f} kg")
+
+        st.markdown("---")
+
+        c_highlight = st.columns([1.5, 2])
+        with c_highlight[0]:
+            st.metric(
+                "Estimated compensation per passenger",
+                f"€ {stats['avg_compensation_per_passenger_eur']:,.2f}",
+            )
+
+        c1, c2 = st.columns(2)
+
+        with c1:
+            if df_airlines_total.empty:
+                st.info("No airline emissions data available.")
+            else:
+                fig_total = px.bar(
+                    df_airlines_total.head(10),
+                    x="airline",
+                    y="co2_tonnes",
+                    title="Top airlines by total CO2 emissions",
+                    labels={"airline": "Airline", "co2_tonnes": "CO2 emissions (tonnes)"},
+                )
+                st.plotly_chart(fig_total, use_container_width=True)
+
+        with c2:
+            if df_airlines_avg.empty:
+                st.info("No airline average-emissions data available.")
+            else:
+                fig_avg = px.bar(
+                    df_airlines_avg.head(10),
+                    x="airline",
+                    y="avg_co2_kg",
+                    title="Average CO2 emissions per flight by airline",
+                    labels={"airline": "Airline", "avg_co2_kg": "Average CO2 per flight (kg)"},
+                )
+                st.plotly_chart(fig_avg, use_container_width=True)
+
+        c3, c4 = st.columns(2)
+
+        with c3:
+            df_family_plot = df_family[df_family["family"] != "Unknown"]
+
+            if df_family_plot.empty:
+                st.info("No aircraft-family data available.")
+            else:
+                fig_family = px.bar(
+                    df_family_plot.head(10),
+                    x="family",
+                    y="co2_tonnes",
+                    title="CO2 emissions by aircraft family",
+                    labels={"family": "Aircraft family", "co2_tonnes": "CO2 emissions (tonnes)"},
+                )
+                fig_family.update_layout(xaxis_tickangle=-25)
+                st.plotly_chart(fig_family, use_container_width=True)
+
+        with c4:
+            if df_timeline.empty:
+                st.info("No timeline data available.")
+            else:
+                granularity_label = {
+                    "day": "day",
+                    "week": "week",
+                    "month": "month",
+                }.get(stats["timeline_granularity"], "period")
+
+                fig_timeline = px.line(
+                    df_timeline,
+                    x="period_label",
+                    y="co2_tonnes",
+                    markers=True,
+                    title=f"CO2 emissions over time (grouped by {granularity_label})",
+                    labels={"period_label": "Time period", "co2_tonnes": "CO2 emissions (tonnes)"},
+                )
+                fig_timeline.update_layout(xaxis_title="Time period")
+                st.plotly_chart(fig_timeline, use_container_width=True)
+
+        with st.expander("Assumptions and interpretation"):
+            st.markdown(
+                """
+                - Fuel usage is estimated from flight distance and aircraft assumptions.
+                - CO2 emissions are derived from estimated fuel burn.
+                - Per passenger values use an assumed average load factor.
+                - Compensation is an estimate based on a fixed carbon price assumption and is set at 90 euros per tonne CO2.
+                - This means the CO2 dashboard is an estimate and not exact reported fuel data.
+                """
+            )
 
     elif page == "Noise":
         st.markdown("### Noise")
