@@ -24,7 +24,7 @@ def get_real_noise_data(
     arrival: Optional[str],
     start_date: date,
     end_date: date,
-) -> Tuple[pd.DataFrame, pd.DataFrame, float]:
+) -> Tuple[pd.DataFrame, pd.DataFrame, float, int]:
 
     # EPNdB values from Table 1 of the research study
     epndb_mapping = """
@@ -58,9 +58,7 @@ def get_real_noise_data(
 
     date_filter = "date(printf('%04d-%02d-%02d', f.year, f.month, f.day)) BETWEEN ? AND ?"
 
-    # --- Departures leg ---
-    # A flight counts as a departure noise event at a NYC airport when origin IN NYC.
-    # The sidebar "departure" filter restricts which NYC origin; "arrival" restricts dest.
+    # Departures
     dep_parts = ["f.origin IN ('JFK','EWR','LGA')", date_filter]
     dep_params: List[object] = [start_date.isoformat(), end_date.isoformat()]
     if departure is not None:
@@ -70,9 +68,7 @@ def get_real_noise_data(
         dep_parts.append("f.dest = ?")
         dep_params.append(arrival)
 
-    # --- Arrivals leg ---
-    # A flight counts as an arrival noise event at a NYC airport when dest IN NYC.
-    # The sidebar "departure" filter restricts origin; "arrival" restricts which NYC dest.
+    # Arrivals
     arr_parts = ["f.dest IN ('JFK','EWR','LGA')", date_filter]
     arr_params: List[object] = [start_date.isoformat(), end_date.isoformat()]
     if departure is not None:
@@ -86,8 +82,6 @@ def get_real_noise_data(
     arr_where = " AND ".join(arr_parts)
 
     # UNION ALL: departures (airport = origin) + arrivals (airport = dest)
-    # Arrivals use arr_time/100 to get the correct local arrival hour,
-    # since f.hour always refers to the scheduled departure hour.
     union_sql = f"""
         SELECT f.carrier, f.tailnum, CAST(f.hour AS INTEGER) AS hour, f.origin AS airport,
                {epndb_mapping} AS epndb
@@ -103,13 +97,14 @@ def get_real_noise_data(
     """
     union_params = tuple(dep_params + arr_params)
 
-    # Query 1: Ranking by Airport
+    # Query 1: Ranking by Airport (includes flight count for per-flight average)
     df_ranking = _qdf(
-        f"SELECT airport, SUM(epndb) AS noise FROM ({union_sql}) GROUP BY airport ORDER BY noise DESC",
+        f"SELECT airport, SUM(epndb) AS noise, COUNT(*) AS flight_count FROM ({union_sql}) GROUP BY airport ORDER BY noise DESC",
         union_params,
     )
 
     total_noise = df_ranking["noise"].sum() if not df_ranking.empty else 0.0
+    total_flights = int(df_ranking["flight_count"].sum()) if not df_ranking.empty else 0
 
     # Query 2: Timeline by Hour
     df_timeline = _qdf(
@@ -117,4 +112,4 @@ def get_real_noise_data(
         union_params,
     )
 
-    return df_ranking, df_timeline, total_noise
+    return df_ranking, df_timeline, total_noise, total_flights
