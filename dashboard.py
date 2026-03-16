@@ -899,7 +899,7 @@ def render_main_content() -> None:
         arr = filters["arrival"]
         start_date, end_date = filters["timeframe"]
 
-        df_ranking, df_timeline, total_noise = get_real_noise_data(dep, arr, start_date, end_date)
+        df_ranking, df_timeline, total_noise, total_flights = get_real_noise_data(dep, arr, start_date, end_date)
 
         if dep and not arr:
             noise_label = "departures only"
@@ -910,10 +910,22 @@ def render_main_content() -> None:
         else:
             noise_label = "arrivals + departures"
 
-        st.metric(
-            f"Total noise produced by NYC airports (Cumulative EPNdB, {noise_label})",
-            f"{total_noise:,.1f}",
-        )
+        
+        total_days = (end_date - start_date).days + 1
+        avg_daily_noise_total = total_noise / total_days if total_days > 0 else 0.0
+        avg_noise_per_flight = total_noise / total_flights if total_flights > 0 else 0.0
+
+        
+        st.markdown(f"#### Key Noise Indicators ({noise_label})")
+        m1, m2, m3 = st.columns(3)
+        with m1:
+            st.metric("Total noise (Cumulative EPNdB)", f"{total_noise:,.1f}")
+        with m2:
+            st.metric("Average noise per flight (EPNdB)", f"{avg_noise_per_flight:,.1f}")
+        with m3:
+            st.metric("Average daily noise (EPNdB)", f"{avg_daily_noise_total:,.1f}")
+
+        st.markdown("---")
 
         c1, c2 = st.columns(2)
         with c1:
@@ -921,9 +933,11 @@ def render_main_content() -> None:
             if df_ranking.empty:
                 st.info("No data available for the selected filters.")
             else:
-                display_ranking = df_ranking.copy()
-                display_ranking.columns = ["Airport", "Noise (EPNdB)"]
-                display_ranking["Noise (EPNdB)"] = display_ranking["Noise (EPNdB)"].map("{:,.1f}".format)
+                display_ranking = df_ranking[["airport", "noise"]].copy()
+                display_ranking["daily_avg"] = display_ranking["noise"] / total_days
+                display_ranking.columns = ["Airport", "Total Noise (EPNdB)", "Daily Avg (EPNdB)"]
+                display_ranking["Total Noise (EPNdB)"] = display_ranking["Total Noise (EPNdB)"].map("{:,.1f}".format)
+                display_ranking["Daily Avg (EPNdB)"] = display_ranking["Daily Avg (EPNdB)"].map("{:,.1f}".format)
                 st.dataframe(display_ranking, use_container_width=True, hide_index=True)
         with c2:
             if df_timeline.empty:
