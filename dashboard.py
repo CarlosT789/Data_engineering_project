@@ -14,7 +14,14 @@ import streamlit as st
 
 from noise import get_real_noise_data
 from co2 import get_real_co2_data
-
+from delay import (
+    get_real_delay_data,
+    plot_delay_month,
+    plot_delay_hour,
+    plot_delay_chance_dep,
+    plot_worst_delay_pct_dest,
+    plot_best_delay_pct_dest,
+)
 from planes import (
     load_plane_data,
     apply_plane_filters,
@@ -26,14 +33,9 @@ from planes import (
     plot_plane_type_distribution,
 )
 
-
-# directory config might need to change it
-
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "flights_database.db"
 
-
-# DB helper functions
 
 def get_connection() -> sqlite3.Connection:
     if not DB_PATH.exists():
@@ -63,6 +65,7 @@ def get_table_names() -> List[str]:
             con,
         )
     return df["name"].tolist()
+
 
 @st.cache_data(show_spinner=False)
 def get_plane_data() -> pd.DataFrame:
@@ -117,10 +120,6 @@ def get_all_airports() -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def get_all_filter_airports() -> pd.DataFrame:
-    """
-    Airports that appear anywhere in flights, either as origin or destination,
-    and that have coordinates for the map.
-    """
     return qdf(
         """
         SELECT DISTINCT a.faa, a.name, a.lat, a.lon
@@ -139,10 +138,6 @@ def get_all_filter_airports() -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def get_departure_filter_airports() -> pd.DataFrame:
-    """
-    Only airports that appear as origins in flights.
-    In this dataset, these should be the NYC departure airports.
-    """
     return qdf(
         """
         SELECT DISTINCT a.faa, a.name, a.lat, a.lon
@@ -205,7 +200,8 @@ def get_summary_stats(
             COUNT(*) AS total_flights,
             AVG(air_time) AS avg_duration,
             AVG(dep_delay) AS avg_dep_delay,
-            AVG(arr_delay) AS avg_arr_delay
+            AVG(arr_delay) AS avg_arr_delay,
+            SUM(distance) AS total_distance_miles
         FROM flights
         WHERE {where_sql}
         """,
@@ -214,11 +210,18 @@ def get_summary_stats(
 
     row = df.iloc[0].to_dict()
 
+    total_distance_miles = float(row["total_distance_miles"]) if pd.notna(row["total_distance_miles"]) else 0.0
+    total_distance_km = total_distance_miles * 1.60934
+    earth_circumference_km = 40075.0
+    around_earth = total_distance_km / earth_circumference_km if earth_circumference_km > 0 else 0.0
+
     return {
         "total_flights": int(row["total_flights"]) if pd.notna(row["total_flights"]) else 0,
         "avg_duration": float(row["avg_duration"]) if pd.notna(row["avg_duration"]) else None,
         "avg_dep_delay": float(row["avg_dep_delay"]) if pd.notna(row["avg_dep_delay"]) else None,
         "avg_arr_delay": float(row["avg_arr_delay"]) if pd.notna(row["avg_arr_delay"]) else None,
+        "total_distance_km": total_distance_km,
+        "around_earth_trips": around_earth,
     }
 
 
@@ -262,14 +265,7 @@ def route_flight_count(
     return int(df.loc[0, "n"])
 
 
-# more helper functions
-
 def normalize_timeframe(value, default_start: date, default_end: date) -> Tuple[date, date]:
-    """
-    Streamlit date_input can return:
-    - one date
-    - tuple/list of 2 dates
-    """
     if isinstance(value, date):
         return value, value
 
@@ -302,10 +298,6 @@ def interpolate_geodesic(
     lon2: float,
     n_points: int = 80,
 ) -> Tuple[List[float], List[float]]:
-    """
-    Great-circle interpolation on a sphere.
-    This gives a nice curved geodesic-looking route line.
-    """
     phi1, lam1 = deg2rad(lat1), deg2rad(lon1)
     phi2, lam2 = deg2rad(lat2), deg2rad(lon2)
 
@@ -348,37 +340,22 @@ def interpolate_geodesic(
     return lats, lons
 
 
-# PLACEHOLDERS FOR LOWER TABS (Careful only placeholders atm)
+def placeholder_planes_data() -> Dict[str, pd.DataFrame]:
+    return {
+        "top_used": pd.DataFrame(
+            {"plane": ["A320", "B737-800", "E190", "CRJ-900", "A321"], "value": [14000, 13200, 9800, 8700, 8200]}
+        ),
+        "top_fuel": pd.DataFrame(
+            {"plane": ["B777", "A330", "B767", "A321", "B737-800"], "value": [5400, 5100, 4700, 4200, 3900]}
+        ),
+        "top_distance": pd.DataFrame(
+            {"plane": ["B777", "A330", "B767", "A321", "B737-800"], "value": [8900, 8600, 8100, 7200, 6800]}
+        ),
+        "top_manufacturers": pd.DataFrame(
+            {"manufacturer": ["Boeing", "Airbus", "Embraer", "Bombardier", "Cessna"], "count": [22000, 19000, 8700, 5100, 600]}
+        ),
+    }
 
-def placeholder_delay_hist() -> pd.DataFrame:
-    bins = ["00–03", "03–06", "06–09", "09–12", "12–15", "15–18", "18–21", "21–24"]
-    vals = [70, 55, 240, 380, 450, 520, 600, 280]
-    return pd.DataFrame({"time_bin": bins, "n_delayed_flights": vals})
-
-
-def placeholder_delay_relation() -> pd.DataFrame:
-    return pd.DataFrame(
-        {
-            "month": list(range(1, 13)),
-            "n_delayed_flights": [900, 850, 910, 980, 1100, 1230, 1300, 1270, 1090, 970, 940, 1000],
-        }
-    )
-
-
-def placeholder_top_airports() -> pd.DataFrame:
-    return pd.DataFrame(
-        {"airport": ["JFK", "EWR", "LGA", "LAX", "ORD"], "delays": [5100, 4300, 3900, 2700, 2500]}
-    )
-
-
-def placeholder_top_airlines() -> pd.DataFrame:
-    return pd.DataFrame(
-        {"airline": ["UA", "AA", "DL", "B6", "WN"], "delays": [7200, 6900, 6500, 6100, 5400]}
-    )
-
-
-
-# dashboard session state
 
 def init_session_state() -> None:
     min_date, max_date = get_date_bounds()
@@ -425,8 +402,6 @@ def apply_reset_if_requested() -> None:
         st.session_state["do_reset_filters"] = False
 
 
-# map top right corner
-
 def make_map(
     departure: Optional[str],
     arrival: Optional[str],
@@ -434,7 +409,6 @@ def make_map(
     end_date: date,
     height: int = 250,
 ) -> go.Figure:
-    # initial state: no filters show all airports, focused on North America
     if departure is None and arrival is None:
         df = get_all_airports()
 
@@ -542,14 +516,11 @@ def make_map(
     return fig
 
 
-# UI render
-
 def render_filter_panel() -> None:
     st.markdown("#### Filters")
 
     min_date, max_date = get_date_bounds()
 
-    # Departure: only origins from dataset (NYC airports)
     dep_df = get_departure_filter_airports()
     dep_faas = dep_df["faa"].tolist()
     dep_lookup = {
@@ -557,7 +528,6 @@ def render_filter_panel() -> None:
         for _, row in dep_df.iterrows()
     }
 
-    # Arrival: all airports that appear anywhere and have coordinates
     arr_df = get_all_filter_airports()
     arr_faas = arr_df["faa"].tolist()
     arr_lookup = {
@@ -622,7 +592,6 @@ def render_top_area() -> None:
     info_col, map_col = st.columns([2.1, 1.35])
 
     with info_col:
-        st.markdown("#### General Info")
         st.markdown(f"**Total flights:** {stats['total_flights']:,}")
 
         if stats["avg_duration"] is None:
@@ -639,6 +608,9 @@ def render_top_area() -> None:
             st.markdown("**Average arr delay:** —")
         else:
             st.markdown(f"**Average arr delay:** {stats['avg_arr_delay']:.1f} min")
+
+        st.markdown(f"**Total distance flown:** {stats['total_distance_km']:,.0f} km")
+        st.markdown(f"**Equivalent around-Earth trips:** {stats['around_earth_trips']:.2f}")
 
         if dep is None and arr is None:
             st.caption("Initial state: all airports are shown, focused on North America.")
@@ -696,23 +668,53 @@ def render_main_content() -> None:
 
     if page == "Delays":
         st.markdown("### Delays")
-        st.metric("Ratio of delays", "27.4%")
 
-        df_hist = placeholder_delay_hist()
-        fig_hist = px.bar(df_hist, x="time_bin", y="n_delayed_flights", title="Delayed flights by time interval")
-        st.plotly_chart(fig_hist, use_container_width=True)
+        filters = st.session_state["submitted_filters"]
+        dep = filters["departure"]
+        arr = filters["arrival"]
+        start_date, end_date = filters["timeframe"]
 
-        df_rel = placeholder_delay_relation()
-        fig_rel = px.line(df_rel, x="month", y="n_delayed_flights", markers=True, title="Delayed flights vs month")
-        st.plotly_chart(fig_rel, use_container_width=True)
+        stats, df, df_all_origin, df_all_dest = get_real_delay_data(dep, arr, start_date, end_date)
 
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("#### Top airports by delays")
-            st.dataframe(placeholder_top_airports(), use_container_width=True, hide_index=True)
-        with c2:
-            st.markdown("#### Top airlines by delays")
-            st.dataframe(placeholder_top_airlines(), use_container_width=True, hide_index=True)
+        if df.empty:
+            st.info("No delay data available for the selected filters.")
+        else:
+            r1c1, r1c2, r1c3 = st.columns(3)
+            with r1c1:
+                st.metric("Delay percentage", f"{stats['delay_pct']:.2f}%")
+            with r1c2:
+                st.metric("Average delay time", f"{stats['average_delay']:.1f} min")
+            with r1c3:
+                st.metric("Average delay time if there is a delay", f"{stats['average_time_with_delay']:.1f} min")
+
+            c1, c2 = st.columns(2)
+            with c1:
+                st.plotly_chart(
+                    plot_delay_chance_dep(df_all_origin),
+                    use_container_width=True
+                )
+            with c2:
+                st.plotly_chart(
+                    plot_delay_month(df),
+                    use_container_width=True
+                )
+
+            c3, c4 = st.columns(2)
+            with c3:
+                st.plotly_chart(
+                    plot_delay_hour(df),
+                    use_container_width=True
+                )
+            with c4:
+                st.plotly_chart(
+                    plot_worst_delay_pct_dest(df_all_dest),
+                    use_container_width=True
+                )
+
+            st.plotly_chart(
+                plot_best_delay_pct_dest(df_all_dest),
+                use_container_width=True
+            )
 
     elif page == "Planes":
         st.markdown("### Planes")
@@ -785,8 +787,6 @@ def render_main_content() -> None:
             df_family,
             df_timeline,
         ) = get_real_co2_data(dep, arr, start_date, end_date)
-
-        # --- metric layout (clean grid)
 
         r1c1, r1c2, r1c3 = st.columns(3)
         with r1c1:
@@ -888,6 +888,7 @@ def render_main_content() -> None:
                 - Per passenger values use an assumed average load factor.
                 - Compensation is an estimate based on a fixed carbon price assumption and is set at 90 euros per tonne CO2.
                 - This means the CO2 dashboard is an estimate and not exact reported fuel data.
+                - The average annual carbon footprint of a person in the Netherlands is approximately 9 tonnes of CO2 (equivalent)
                 """
             )
 
@@ -910,12 +911,10 @@ def render_main_content() -> None:
         else:
             noise_label = "arrivals + departures"
 
-        
         total_days = (end_date - start_date).days + 1
         avg_daily_noise_total = total_noise / total_days if total_days > 0 else 0.0
         avg_noise_per_flight = total_noise / total_flights if total_flights > 0 else 0.0
 
-        
         st.markdown(f"#### Key Noise Indicators ({noise_label})")
         m1, m2, m3 = st.columns(3)
         with m1:
@@ -953,8 +952,6 @@ def render_main_content() -> None:
                 fig.update_layout(xaxis=dict(tickmode="linear", tick0=0, dtick=1))
                 st.plotly_chart(fig, use_container_width=True)
 
-
-# main
 
 def main() -> None:
     st.set_page_config(page_title="Flights Dashboard", layout="wide")
