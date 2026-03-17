@@ -173,12 +173,23 @@ def _build_timeline(df: pd.DataFrame, start_date: date, end_date: date) -> Tuple
         timeline_df["week_start"] = timeline_df["flight_date"] - pd.to_timedelta(
             timeline_df["flight_date"].dt.weekday, unit="D"
         )
+
         grouped = (
-            timeline_df.groupby("week_start", as_index=False)["co2_kg"]
-            .sum()
+            timeline_df.groupby("week_start", as_index=False)
+            .agg(
+                co2_kg=("co2_kg", "sum"),
+                days_in_bin=("flight_date", "nunique"),
+            )
             .sort_values("week_start")
         )
-        grouped["co2_tonnes"] = grouped["co2_kg"] / 1000.0
+
+        # normalize to full-week equivalent only for partial weeks
+        grouped["co2_kg_normalized"] = grouped.apply(
+            lambda row: row["co2_kg"] * (7.0 / row["days_in_bin"]) if row["days_in_bin"] < 7 else row["co2_kg"],
+            axis=1,
+        )
+
+        grouped["co2_tonnes"] = grouped["co2_kg_normalized"] / 1000.0
         grouped["period_label"] = grouped["week_start"].dt.strftime("Week of %Y-%m-%d")
         return grouped[["period_label", "co2_tonnes"]], granularity
 
