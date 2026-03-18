@@ -12,6 +12,30 @@ BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "flights_database.db"
 
 
+def classify_body_type(row: pd.Series) -> str:
+    """
+    Classify aircraft as narrow-body / wide-body.
+
+    Practical rule:
+    - wide-body if seats >= 250
+    - narrow-body otherwise
+    - other for non fixed-wing multi-engine aircraft
+    - unknown if seats are missing
+    """
+    seats = row.get("seats")
+    aircraft_type = row.get("type")
+
+    if pd.isna(seats):
+        return "unknown"
+
+    if pd.notna(aircraft_type) and aircraft_type != "Fixed wing multi engine":
+        return "other"
+
+    if seats >= 250:
+        return "wide-body"
+    return "narrow-body"
+
+
 def load_plane_data(db_path: Path = DB_PATH) -> pd.DataFrame:
     """
     Load flight + plane information needed for the Planes dashboard.
@@ -46,6 +70,7 @@ def load_plane_data(db_path: Path = DB_PATH) -> pd.DataFrame:
         dict(year=df["year"], month=df["month"], day=df["day"]),
         errors="coerce",
     )
+    df["body_type"] = df.apply(classify_body_type, axis=1)
     return df
 
 
@@ -56,9 +81,6 @@ def apply_plane_filters(
     start_date=None,
     end_date=None,
 ) -> pd.DataFrame:
-    """
-    Apply dashboard filters to the plane dataframe.
-    """
     x = df.copy()
 
     if origin:
@@ -79,9 +101,6 @@ def apply_plane_filters(
 
 
 def top_models_by_flights(df: pd.DataFrame, n: int = 5) -> pd.DataFrame:
-    """
-    Top aircraft models by number of flights.
-    """
     out = (
         df.dropna(subset=["model"])
         .groupby("model", as_index=False)
@@ -93,10 +112,7 @@ def top_models_by_flights(df: pd.DataFrame, n: int = 5) -> pd.DataFrame:
     return out
 
 
-def top_models_by_distance(df: pd.DataFrame, n: int = 5) -> pd.DataFrame:
-    """
-    Top aircraft models by total distance flown.
-    """
+def top_models_by_total_distance(df: pd.DataFrame, n: int = 5) -> pd.DataFrame:
     out = (
         df.dropna(subset=["model", "distance"])
         .groupby("model", as_index=False)
@@ -107,10 +123,14 @@ def top_models_by_distance(df: pd.DataFrame, n: int = 5) -> pd.DataFrame:
     return out
 
 
+def top_models_by_distance(df: pd.DataFrame, n: int = 5) -> pd.DataFrame:
+    """
+    Alias kept for dashboard compatibility.
+    """
+    return top_models_by_total_distance(df, n=n)
+
+
 def top_models_by_avg_distance(df: pd.DataFrame, n: int = 5) -> pd.DataFrame:
-    """
-    Top aircraft models by average distance per flight.
-    """
     out = (
         df.dropna(subset=["model", "distance"])
         .groupby("model", as_index=False)
@@ -122,9 +142,6 @@ def top_models_by_avg_distance(df: pd.DataFrame, n: int = 5) -> pd.DataFrame:
 
 
 def top_manufacturers(df: pd.DataFrame, n: int = 5) -> pd.DataFrame:
-    """
-    Top manufacturers by number of flights.
-    """
     out = (
         df.dropna(subset=["manufacturer"])
         .groupby("manufacturer", as_index=False)
@@ -137,46 +154,46 @@ def top_manufacturers(df: pd.DataFrame, n: int = 5) -> pd.DataFrame:
 
 
 def average_speed_by_model(df: pd.DataFrame, min_flights: int = 20) -> pd.DataFrame:
-    """
-    Average speed per aircraft model based on distance / air_time.
-    Speed is in miles per hour.
-    """
     x = df.dropna(subset=["model", "distance", "air_time"]).copy()
     x = x[x["air_time"] > 0]
     x["speed_mph"] = 60 * x["distance"] / x["air_time"]
 
-    out = (
-        x.groupby("model", as_index=False)
-        .agg(
-            avg_speed=("speed_mph", "mean"),
-            n_flights=("speed_mph", "size"),
-        )
+    out = x.groupby("model", as_index=False).agg(
+        avg_speed=("speed_mph", "mean"),
+        n_flights=("speed_mph", "size"),
     )
 
-    out = out[out["n_flights"] >= min_flights]
+    out = out[out["n_flights"] >= min_flights].copy()
+    out["avg_speed"] = out["avg_speed"].round(0).astype(int)
     out = out.sort_values("avg_speed", ascending=False)
 
     return out
 
 
 def average_flight_speed(df: pd.DataFrame) -> float:
-    """
-    Average flight speed across all filtered flights.
-    """
     x = df.dropna(subset=["distance", "air_time"]).copy()
     x = x[x["air_time"] > 0]
     if x.empty:
         return float("nan")
-    return float((60 * x["distance"] / x["air_time"]).mean())
+    avg_speed = (60 * x["distance"] / x["air_time"]).mean()
+    return float(round(avg_speed))
 
 
 def plane_type_counts(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Distribution of aircraft types by number of flights.
-    """
     out = (
         df.dropna(subset=["type"])
         .groupby("type", as_index=False)
+        .size()
+        .rename(columns={"size": "n_flights"})
+        .sort_values("n_flights", ascending=False)
+    )
+    return out
+
+
+def body_type_counts(df: pd.DataFrame) -> pd.DataFrame:
+    out = (
+        df.dropna(subset=["body_type"])
+        .groupby("body_type", as_index=False)
         .size()
         .rename(columns={"size": "n_flights"})
         .sort_values("n_flights", ascending=False)
@@ -191,19 +208,17 @@ def plot_top_models_by_flights(df: pd.DataFrame, n: int = 5):
         x="model",
         y="n_flights",
         title=f"Top {n} aircraft models by number of flights",
-        text="n_flights",
     )
     return fig
 
 
 def plot_top_models_by_distance(df: pd.DataFrame, n: int = 5):
-    stats = top_models_by_distance(df, n=n)
+    stats = top_models_by_total_distance(df, n=n)
     fig = px.bar(
         stats,
         x="model",
         y="total_distance",
         title=f"Top {n} aircraft models by total distance flown",
-        text="total_distance",
     )
     return fig
 
@@ -215,7 +230,6 @@ def plot_top_manufacturers(df: pd.DataFrame, n: int = 5):
         x="manufacturer",
         y="n_flights",
         title=f"Top {n} manufacturers",
-        text="n_flights",
     )
     return fig
 
@@ -227,7 +241,6 @@ def plot_average_speed_by_model(df: pd.DataFrame, n: int = 10):
         x="model",
         y="avg_speed",
         title=f"Top {n} aircraft models by average speed",
-        text="avg_speed",
     )
     return fig
 
@@ -239,15 +252,22 @@ def plot_plane_type_distribution(df: pd.DataFrame):
         x="type",
         y="n_flights",
         title="Aircraft type distribution",
-        text="n_flights",
+    )
+    return fig
+
+
+def plot_body_type_distribution(df: pd.DataFrame):
+    stats = body_type_counts(df)
+    fig = px.bar(
+        stats,
+        x="body_type",
+        y="n_flights",
+        title="Aircraft body type distribution",
     )
     return fig
 
 
 def plane_type_usage(df: pd.DataFrame) -> dict:
-    """
-    Aircraft type usage as a dictionary.
-    """
     stats = (
         df.dropna(subset=["type"])
         .groupby("type")
@@ -258,9 +278,6 @@ def plane_type_usage(df: pd.DataFrame) -> dict:
 
 
 def model_usage(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Aircraft model usage counts.
-    """
     out = (
         df.dropna(subset=["model"])
         .groupby("model", as_index=False)
