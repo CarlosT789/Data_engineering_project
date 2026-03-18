@@ -9,7 +9,7 @@ import pandas as pd
 import plotly.express as px
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "flights_database.db"
+DB_PATH = BASE_DIR / "data" / "flights_database.db"
 
 
 def classify_body_type(row: pd.Series) -> str:
