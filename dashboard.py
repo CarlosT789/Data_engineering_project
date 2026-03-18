@@ -31,6 +31,7 @@ from planes import (
     plot_top_manufacturers,
     plot_average_speed_by_model,
     plot_plane_type_distribution,
+    plot_body_type_distribution,
 )
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -338,23 +339,6 @@ def interpolate_geodesic(
         lons.append(rad2deg(lam))
 
     return lats, lons
-
-
-def placeholder_planes_data() -> Dict[str, pd.DataFrame]:
-    return {
-        "top_used": pd.DataFrame(
-            {"plane": ["A320", "B737-800", "E190", "CRJ-900", "A321"], "value": [14000, 13200, 9800, 8700, 8200]}
-        ),
-        "top_fuel": pd.DataFrame(
-            {"plane": ["B777", "A330", "B767", "A321", "B737-800"], "value": [5400, 5100, 4700, 4200, 3900]}
-        ),
-        "top_distance": pd.DataFrame(
-            {"plane": ["B777", "A330", "B767", "A321", "B737-800"], "value": [8900, 8600, 8100, 7200, 6800]}
-        ),
-        "top_manufacturers": pd.DataFrame(
-            {"manufacturer": ["Boeing", "Airbus", "Embraer", "Bombardier", "Cessna"], "count": [22000, 19000, 8700, 5100, 600]}
-        ),
-    }
 
 
 def init_session_state() -> None:
@@ -767,10 +751,17 @@ def render_main_content() -> None:
                     use_container_width=True
                 )
 
-            st.plotly_chart(
-                plot_plane_type_distribution(filtered_planes),
-                use_container_width=True
-            )
+            c5, c6 = st.columns(2)
+            with c5:
+                st.plotly_chart(
+                    plot_plane_type_distribution(filtered_planes),
+                    use_container_width=True
+                )
+            with c6:
+                st.plotly_chart(
+                    plot_body_type_distribution(filtered_planes),
+                    use_container_width=True
+                )
 
     elif page == "CO2":
         st.markdown("### CO2")
