@@ -142,6 +142,15 @@ def delay_pct_by(df: pd.DataFrame, by: str) -> pd.DataFrame:
     out["delay_pct"] = out["delay_count"] / out["arr_delay"] * 100
     return out
 
+def plot_delay_time(df):
+    x = df[df["arr_delay"] > 0]
+    fig = px.histogram(x, 
+                       x='arr_delay', 
+                       nbins=400, 
+                       range_x= [0, 200],
+                       title="total amount of delays per delay time",
+                       labels={'arr_delay': "arrival delay", 'delay': "total amount of delays"})
+    return fig
 
 def plot_delay_month(df: pd.DataFrame):
     x = delay_pct_by(df, "month")
