@@ -16,6 +16,7 @@ from noise import get_real_noise_data
 from co2 import get_real_co2_data
 from delay import (
     get_real_delay_data,
+    plot_delay_time,
     plot_delay_month,
     plot_delay_hour,
     plot_delay_chance_dep,
