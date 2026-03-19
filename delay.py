@@ -150,7 +150,7 @@ def plot_delay_time(df):
                         range_x= [0, 200],
                         title="Total amount of delays per arrival delay time",
                         labels={'arr_delay': "Arrival delay"})
-                        fig.update_yaxes(title="Total amount of delays")
+    fig.update_yaxes(title="Total amount of delays")
     return fig
 
 def plot_delay_month(df: pd.DataFrame):
