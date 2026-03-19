@@ -208,6 +208,7 @@ def plot_top_models_by_flights(df: pd.DataFrame, n: int = 5):
         x="model",
         y="n_flights",
         title=f"Top {n} aircraft models by number of flights",
+        labels={"model": "Aircraft model", "n_flights": "Number of flights"},
     )
     return fig
 
@@ -219,6 +220,7 @@ def plot_top_models_by_distance(df: pd.DataFrame, n: int = 5):
         x="model",
         y="total_distance",
         title=f"Top {n} aircraft models by total distance flown",
+        labels={"model": "Aircraft model", "total_distance": "Total distance (km)"},
     )
     return fig
 
@@ -230,6 +232,7 @@ def plot_top_manufacturers(df: pd.DataFrame, n: int = 5):
         x="manufacturer",
         y="n_flights",
         title=f"Top {n} manufacturers",
+        labels={"manufacturer": "Manufacturer", "n_flights": "Number of flights"},
     )
     return fig
 
@@ -241,6 +244,7 @@ def plot_average_speed_by_model(df: pd.DataFrame, n: int = 10):
         x="model",
         y="avg_speed",
         title=f"Top {n} aircraft models by average speed",
+        labels={"model": "Aircraft model", "avg_speed": "Average speed (km/h)"},
     )
     return fig
 
@@ -252,6 +256,7 @@ def plot_plane_type_distribution(df: pd.DataFrame):
         x="type",
         y="n_flights",
         title="Aircraft type distribution",
+        labels={"type": "Aircraft type", "n_flights": "Number of flights"},
     )
     return fig
 
@@ -263,6 +268,7 @@ def plot_body_type_distribution(df: pd.DataFrame):
         x="body_type",
         y="n_flights",
         title="Aircraft body type distribution",
+        labels={"body_type": "Aircraft body type", "n_flights": "Number of flights"},
     )
     return fig
 

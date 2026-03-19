@@ -148,8 +148,8 @@ def plot_delay_time(df):
                        x='arr_delay', 
                        nbins=400, 
                        range_x= [0, 200],
-                       title="total amount of delays per delay time",
-                       labels={'arr_delay': "arrival delay", 'delay': "total amount of delays"})
+                       title="Total amount of delays per arrival delay time",
+                       labels={'arr_delay': "Arrival delay", 'count': "Total amount of delays"})
     return fig
 
 def plot_delay_month(df: pd.DataFrame):
@@ -161,6 +161,7 @@ def plot_delay_month(df: pd.DataFrame):
         title="Delay percentage for each month",
         labels={"month": "Month", "delay_pct": "Delay percentage"},
     )
+    fig.update_layout(xaxis=dict(tickmode="linear", tick0=0, dtick=1))
     return fig
 
 
@@ -173,6 +174,7 @@ def plot_delay_hour(df: pd.DataFrame):
         title="Delay percentage for each hour",
         labels={"hour": "Hour at departure", "delay_pct": "Delay percentage"},
     )
+    fig.update_layout(xaxis=dict(tickmode="linear", tick0=0, dtick=1))
     return fig
 
 
