@@ -679,7 +679,7 @@ def render_main_content() -> None:
                 )
             with c2:
                 st.plotly_chart(
-                    plot_delay_month(df),
+                    plot_delay_time(df),
                     use_container_width=True
                 )
 
@@ -691,14 +691,21 @@ def render_main_content() -> None:
                 )
             with c4:
                 st.plotly_chart(
+                    plot_delay_month(df),
+                    use_container_width=True
+                )
+            
+            c5, c6 = st.columns(2)
+            with c5:    
+                st.plotly_chart(
+                    plot_best_delay_pct_dest(df_all_dest),
+                    use_container_width=True
+                )
+            with c6:
+                st.plotly_chart(
                     plot_worst_delay_pct_dest(df_all_dest),
                     use_container_width=True
                 )
-
-            st.plotly_chart(
-                plot_best_delay_pct_dest(df_all_dest),
-                use_container_width=True
-            )
 
     elif page == "Planes":
         st.markdown("### Planes")
